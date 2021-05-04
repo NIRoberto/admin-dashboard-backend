@@ -1,8 +1,32 @@
 import jwt from 'jsonwebtoken';
+import multer from 'multer';
+import sharp from 'sharp';
+import path from 'path';
+const cloudinary = require('cloudinary').v2;
+// import Datauri from 'datauri';
+import streamifier from 'streamifier';
+import dotenv from 'dotenv';
+dotenv.config();
 import userModel from '../Model/userModel';
 
-const signInToken = (id) => {};
+const multerStorage = multer.memoryStorage();
+
+export const upload = multer({
+  storage: multerStorage,
+});
+
 class userController {
+  static async resizeUserPhoto(req, res, next) {
+    req.file.filename = `user-${req.user._id}-${Date.now()}.jpeg`;
+    if (!req.file) return next();
+    sharp(req.file.buffer)
+      .resize(500, 500)
+      .toFormat('jpeg')
+      .jpeg({ quality: 90 })
+      .toFile(`upload/users/${req.file.filename}`);
+    next();
+  }
+
   static async findAll(req, res) {
     try {
       const users = await userModel.find();
@@ -17,6 +41,22 @@ class userController {
       res.status(404).json({
         status: 'error',
         error: 'Not user found',
+      });
+    }
+  }
+
+  static async getOne(req, res) {
+    const user = req.user;
+    try {
+      res.status(200).json({
+        status: 'success',
+        data: {
+          user,
+        },
+      });
+    } catch (error) {
+      res.status(404).json({
+        status: 'fail',
       });
     }
   }
@@ -80,9 +120,7 @@ class userController {
       res.status(200).json({
         status: 'success',
         users: 'SignIn success and login',
-        LoggedInAs: {
-          user,
-        },
+        message: `Welcome again ${user.firstName}`,
         token,
       });
     } catch (error) {
@@ -101,23 +139,53 @@ class userController {
         message: 'this is not the route for updating password is for others',
       });
     }
-    const updateUser = await userModel.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      {
-        new: true,
-        runValidators: true,
-      }
-    );
+    // console.log(req.file);
+
+    cloudinary.config({
+      cloud_name: process.env.CLOUD_NAME,
+      api_key: process.env.API_KEY,
+      api_secret: process.env.API_SECRET,
+    });
+
     try {
-      res.status(200).json({
-        status: 'success',
-        message: 'Update success done ',
-      });
+      let cld_upload_stream = cloudinary.uploader.upload_stream(
+        {
+          folder: 'users',
+        },
+        async function (error, result) {
+          const newInfo = {
+            // profileImage: result.url,
+            location: req.body.location,
+            phone: req.body.phone,
+            birthDate: req.body.birthDate,
+            desc: req.body.desc,
+            firstName: req.body.firstName,
+            lastName: req.body.lastName,
+            email: req.body.email,
+          };
+          const updateUser = await userModel.findByIdAndUpdate(
+            req.params.id,
+            newInfo,
+            {
+              new: true,
+              runValidators: false,
+            }
+          );
+          res.status(200).json({
+            status: 'success',
+            message: 'Update success done ',
+            data: {
+              updateUser,
+            },
+          });
+        }
+      );
+
+      streamifier.createReadStream(req.file.buffer).pipe(cld_upload_stream);
     } catch (error) {
       res.status(404).json({
         status: 'error',
-        error: error,
+        error: error.message,
       });
     }
   }
